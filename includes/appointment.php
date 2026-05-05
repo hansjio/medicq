@@ -280,7 +280,56 @@ class Appointment {
         $stmt->bind_param("si", $notes, $id);
         return $stmt->execute();
     }
-    
+        public function reschedule($appointmentId, $newDate, $newTime) {
+        // Load appointment to get doctor_id
+        $appointment = $this->getById($appointmentId);
+        if (!$appointment) {
+            return ['success' => false, 'message' => 'Appointment not found.'];
+        }
+
+        // Get slot duration for the doctor on the new day
+        $dayOfWeek = date('l', strtotime($newDate));
+        $stmt = $this->db->prepare(
+            "SELECT slot_duration FROM doctor_schedules WHERE doctor_id = ? AND day_of_week = ?"
+        );
+        $stmt->bind_param("is", $appointment['doctor_id'], $dayOfWeek);
+        $stmt->execute();
+        $result   = $stmt->get_result()->fetch_assoc();
+        $duration = $result ? $result['slot_duration'] : 30;
+
+        $newEndTime = date('H:i:s', strtotime($newTime) + ($duration * 60));
+
+        // Check for conflicts on the new slot (exclude the current appointment)
+        if ($this->hasConflict($appointment['doctor_id'], $newDate, $newTime, $newEndTime, $appointmentId)) {
+            return ['success' => false, 'message' => 'That time slot is no longer available. Please choose another.'];
+        }
+
+        // Update the appointment
+        $stmt = $this->db->prepare(
+            "UPDATE appointments
+             SET appointment_date = ?, appointment_time = ?, end_time = ?, status = 'pending'
+             WHERE id = ?"
+        );
+        $stmt->bind_param("sssi", $newDate, $newTime, $newEndTime, $appointmentId);
+
+        if ($stmt->execute()) {
+            // Notify the doctor
+            $this->createNotification(
+                $appointment['doctor_id'],
+                'user',
+                'Appointment Rescheduled',
+                'An appointment from ' . $appointment['patient_name'] . ' has been rescheduled to '
+                    . formatDate($newDate) . ' at ' . formatTime($newTime) . '.',
+                'appointment',
+                $appointmentId
+            );
+
+            return ['success' => true, 'message' => 'Appointment rescheduled successfully.'];
+        }
+
+        return ['success' => false, 'message' => 'Failed to reschedule the appointment. Please try again.'];
+    }
+
     /**
      * Get patient statistics
      */

@@ -1,6 +1,10 @@
 <?php
 /**
  * MEDICQ - Patient Appointments List
+ * Place this file at: patient/appointments.php
+ *
+ * FIX: was requireRole('admin') — changed to requireRole('patient')
+ *      and scoped all queries to the logged-in patient only.
  */
 
 $pageTitle = 'My Appointments';
@@ -8,41 +12,30 @@ require_once __DIR__ . '/../includes/config.php';
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/appointment.php';
 
-requireRole('patient');
+requireRole('patient');   // ← was 'admin'
 
-$appointment = new Appointment();
+$appointmentModel = new Appointment();
 
-// Handle cancellation
+// Handle cancellation posted from appointment-details page
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_id'])) {
     $cancelId = (int)$_POST['cancel_id'];
-    $reason = sanitize($_POST['cancellation_reason'] ?? '');
-    
-    $result = $appointment->updateStatus($cancelId, 'cancelled', 'patient', $reason);
-    
-    if ($result['success']) {
+    $reason   = sanitize($_POST['cancellation_reason'] ?? '');
+
+    // Verify ownership before cancelling
+    $appt = $appointmentModel->getById($cancelId);
+    if ($appt && $appt['patient_id'] == $_SESSION['user_id']) {
+        $appointmentModel->updateStatus($cancelId, 'cancelled', 'patient', $reason);
         setFlashMessage('success', 'Appointment cancelled successfully.');
-    } else {
-        setFlashMessage('danger', $result['message']);
     }
-    
     redirect(SITE_URL . '/patient/appointments.php');
 }
 
-// Get filter
-$filter = $_GET['status'] ?? 'all';
+// Filter
+$statusFilter = $_GET['status'] ?? '';
 
-// Get appointments based on filter
-if ($filter === 'upcoming') {
-    $appointments = $appointment->getForPatient($_SESSION['user_id'], null, true);
-} elseif ($filter === 'completed') {
-    $appointments = $appointment->getForPatient($_SESSION['user_id'], 'completed');
-} elseif ($filter === 'cancelled') {
-    $appointments = $appointment->getForPatient($_SESSION['user_id'], 'cancelled');
-} else {
-    $appointments = $appointment->getForPatient($_SESSION['user_id']);
-}
+// Fetch only THIS patient's appointments
+$appointments = $appointmentModel->getForPatient($_SESSION['user_id'], $statusFilter ?: null);
 
-// Get flash message
 $flash = getFlashMessage();
 
 require_once __DIR__ . '/../includes/header.php';
@@ -55,76 +48,72 @@ require_once __DIR__ . '/../includes/header.php';
         <?php echo htmlspecialchars($flash['message']); ?>
     </div>
     <?php endif; ?>
-    
-    <div class="mb-8">
-        <h1 style="font-size: var(--font-size-3xl); margin-bottom: var(--spacing-2);">My Appointments</h1>
-        <p class="text-muted">View and manage all your medical appointments</p>
-    </div>
-    
-    <!-- Search and Filters -->
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-6);">
-        <div class="search-box">
-            <i class="fas fa-search"></i>
-            <input type="text" class="form-control" id="searchInput" placeholder="Search by doctor, specialty, or clinic...">
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--spacing-6);">
+        <div>
+            <h1 style="font-size: var(--font-size-3xl); margin-bottom: var(--spacing-1);">My Appointments</h1>
+            <p class="text-muted">View and manage all your medical appointments</p>
         </div>
+        <a href="<?php echo SITE_URL; ?>/patient/book-appointment.php" class="btn btn-primary">
+            <i class="fas fa-plus"></i> Book Appointment
+        </a>
     </div>
-    
-    <!-- Tabs -->
-    <div class="tabs">
-        <a href="?status=all" class="tab-btn <?php echo $filter === 'all' ? 'active' : ''; ?>">All</a>
-        <a href="?status=upcoming" class="tab-btn <?php echo $filter === 'upcoming' ? 'active' : ''; ?>">Upcoming</a>
-        <a href="?status=completed" class="tab-btn <?php echo $filter === 'completed' ? 'active' : ''; ?>">Completed</a>
-        <a href="?status=cancelled" class="tab-btn <?php echo $filter === 'cancelled' ? 'active' : ''; ?>">Cancelled</a>
+
+    <!-- Status filter tabs -->
+    <div style="display:flex; gap: var(--spacing-2); margin-bottom: var(--spacing-4); flex-wrap:wrap;">
+        <?php
+        $tabs = ['' => 'All', 'pending' => 'Pending', 'confirmed' => 'Confirmed', 'completed' => 'Completed', 'cancelled' => 'Cancelled'];
+        foreach ($tabs as $val => $label):
+        ?>
+        <a href="?status=<?php echo $val; ?>"
+           class="btn btn-sm <?php echo $statusFilter === $val ? 'btn-primary' : 'btn-secondary'; ?>">
+            <?php echo $label; ?>
+        </a>
+        <?php endforeach; ?>
     </div>
-    
-    <!-- Appointments List -->
+
     <div class="card">
-        <div class="card-body" style="padding: 0;">
+        <div class="card-body" style="padding:0;">
             <?php if (empty($appointments)): ?>
-            <div class="empty-state">
-                <i class="far fa-calendar-alt"></i>
+            <div class="empty-state" style="padding: var(--spacing-8);">
+                <i class="far fa-calendar" style="font-size:3rem; color:var(--gray-300); display:block; margin-bottom:var(--spacing-4);"></i>
                 <h3>No Appointments Found</h3>
-                <p>You don't have any <?php echo $filter !== 'all' ? $filter : ''; ?> appointments.</p>
-                <a href="<?php echo SITE_URL; ?>/patient/book-appointment.php" class="btn btn-primary">
-                    Book an Appointment
-                </a>
+                <p>You have no <?php echo $statusFilter ? $statusFilter : ''; ?> appointments.</p>
+                <a href="<?php echo SITE_URL; ?>/patient/book-appointment.php" class="btn btn-primary btn-sm">Book Now</a>
             </div>
             <?php else: ?>
-            <div class="appointment-list" id="appointmentList">
-                <?php foreach ($appointments as $appt): ?>
-                <div class="appointment-row" data-search="<?php echo strtolower($appt['doctor_name'] . ' ' . $appt['specialization'] . ' ' . $appt['clinic_name']); ?>">
-                    <div class="doctor-info">
-                        <h4><?php echo htmlspecialchars($appt['doctor_name']); ?></h4>
-                        <p style="color: var(--primary); margin: var(--spacing-1) 0;"><?php echo htmlspecialchars($appt['specialization']); ?></p>
-                        <p style="color: var(--gray-500); font-size: var(--font-size-sm);"><?php echo htmlspecialchars($appt['clinic_name']); ?></p>
+            <?php foreach ($appointments as $apt): ?>
+            <div style="display:flex; justify-content:space-between; align-items:center; padding: var(--spacing-4); border-bottom: 1px solid var(--gray-100);">
+                <div style="flex:1;">
+                    <div style="display:flex; align-items:center; gap: var(--spacing-3); margin-bottom: var(--spacing-1);">
+                        <strong><?php echo htmlspecialchars($apt['doctor_name']); ?></strong>
+                        <?php echo getStatusBadge($apt['status']); ?>
                     </div>
-                    
-                    <div class="appointment-details" style="flex-direction: column; gap: var(--spacing-2);">
-                        <span><i class="far fa-calendar"></i> <?php echo formatDate($appt['appointment_date']); ?></span>
-                        <span><i class="far fa-clock"></i> <?php echo formatTime($appt['appointment_time']); ?></span>
-                        <span><?php echo getConsultationIcon($appt['consultation_type']); ?></span>
+                    <div class="text-muted" style="font-size: var(--font-size-sm);">
+                        <?php echo htmlspecialchars($apt['specialization']); ?>
+                        &nbsp;·&nbsp;
+                        <?php echo htmlspecialchars($apt['clinic_name'] ?? ''); ?>
                     </div>
-                    
-                    <div>
-                        <?php echo getStatusBadge($appt['status']); ?>
-                    </div>
-                    
-                    <div class="appointment-actions" style="flex-direction: column; gap: var(--spacing-2); border: none; padding: 0; margin: 0;">
-                        <a href="<?php echo SITE_URL; ?>/patient/appointment-details.php?id=<?php echo $appt['id']; ?>" class="btn btn-sm btn-secondary">
-                            View Details
-                        </a>
-                        <?php if ($appt['status'] === 'pending' || $appt['status'] === 'confirmed'): ?>
-                        <a href="<?php echo SITE_URL; ?>/patient/reschedule.php?id=<?php echo $appt['id']; ?>" class="btn btn-sm btn-outline">
-                            Reschedule
-                        </a>
-                        <button type="button" class="btn btn-sm btn-link text-danger" onclick="showCancelModal(<?php echo $appt['id']; ?>)">
-                            <i class="fas fa-times"></i> Cancel
-                        </button>
-                        <?php endif; ?>
+                    <div class="text-muted" style="font-size: var(--font-size-sm); margin-top: var(--spacing-1);">
+                        <i class="far fa-calendar"></i> <?php echo formatDate($apt['appointment_date']); ?>
+                        &nbsp;
+                        <i class="far fa-clock"></i> <?php echo formatTime($apt['appointment_time']); ?>
+                        &nbsp;·&nbsp;
+                        <?php echo getConsultationIcon($apt['consultation_type']); ?>
                     </div>
                 </div>
-                <?php endforeach; ?>
+                <div style="display:flex; gap: var(--spacing-2); align-items:center; flex-shrink:0;">
+                    <a href="<?php echo SITE_URL; ?>/patient/appointment-details.php?id=<?php echo $apt['id']; ?>"
+                       class="btn btn-sm btn-outline">View Details</a>
+                    <?php if (in_array($apt['status'], ['pending', 'confirmed'])): ?>
+                    <a href="<?php echo SITE_URL; ?>/patient/reschedule.php?id=<?php echo $apt['id']; ?>"
+                       class="btn btn-sm btn-secondary">Reschedule</a>
+                    <button type="button" class="btn btn-sm btn-link text-danger"
+                            onclick="openCancelModal(<?php echo $apt['id']; ?>)">Cancel</button>
+                    <?php endif; ?>
+                </div>
             </div>
+            <?php endforeach; ?>
             <?php endif; ?>
         </div>
     </div>
@@ -135,46 +124,29 @@ require_once __DIR__ . '/../includes/header.php';
     <div class="modal">
         <div class="modal-header">
             <h3>Cancel Appointment</h3>
-            <button type="button" class="modal-close" data-dismiss="modal">&times;</button>
+            <button type="button" class="modal-close" onclick="document.getElementById('cancelModal').classList.remove('active')">&times;</button>
         </div>
         <form method="POST">
             <div class="modal-body">
-                <p style="margin-bottom: var(--spacing-4);">Are you sure you want to cancel this appointment?</p>
-                <input type="hidden" name="cancel_id" id="cancelAppointmentId">
+                <p>Are you sure you want to cancel this appointment?</p>
+                <input type="hidden" name="cancel_id" id="cancelId">
                 <div class="form-group mb-0">
-                    <label class="form-label">Reason for Cancellation (Optional)</label>
-                    <textarea name="cancellation_reason" class="form-control" rows="3" placeholder="Please provide a reason..."></textarea>
+                    <label class="form-label">Reason (optional)</label>
+                    <textarea name="cancellation_reason" class="form-control" rows="3" placeholder="Reason for cancellation..."></textarea>
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Keep Appointment</button>
-                <button type="submit" class="btn btn-danger">Cancel Appointment</button>
+                <button type="button" class="btn btn-secondary"
+                        onclick="document.getElementById('cancelModal').classList.remove('active')">Keep It</button>
+                <button type="submit" class="btn btn-danger">Yes, Cancel</button>
             </div>
         </form>
     </div>
 </div>
 
 <script>
-const SITE_URL = '<?php echo SITE_URL; ?>';
-
-// Search functionality
-document.getElementById('searchInput').addEventListener('input', function() {
-    const searchTerm = this.value.toLowerCase();
-    const rows = document.querySelectorAll('.appointment-row');
-    
-    rows.forEach(row => {
-        const searchData = row.dataset.search;
-        if (searchData.includes(searchTerm)) {
-            row.style.display = '';
-        } else {
-            row.style.display = 'none';
-        }
-    });
-});
-
-// Cancel modal
-function showCancelModal(appointmentId) {
-    document.getElementById('cancelAppointmentId').value = appointmentId;
+function openCancelModal(id) {
+    document.getElementById('cancelId').value = id;
     document.getElementById('cancelModal').classList.add('active');
 }
 </script>

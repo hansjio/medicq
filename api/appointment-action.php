@@ -1,4 +1,14 @@
 <?php
+/**
+ * MEDICQ - Appointment Action API
+ * Place this file at: api/appointment-action.php
+ *
+ * FIXES applied:
+ *   - new Appointment()              (was: new Appointment($pdo))
+ *   - removed call to cancelAppointment() which doesn't exist;
+ *     replaced with direct updateStatus('cancelled', ...) call
+ */
+
 require_once '../includes/config.php';
 require_once '../includes/auth.php';
 require_once '../includes/appointment.php';
@@ -10,9 +20,9 @@ if (!isLoggedIn()) {
     exit;
 }
 
-$appointmentManager = new Appointment($pdo);
+$appointmentManager = new Appointment();   // FIX: no argument
 
-$action = $_POST['action'] ?? $_GET['action'] ?? '';
+$action        = $_POST['action'] ?? $_GET['action'] ?? '';
 $appointmentId = intval($_POST['appointment_id'] ?? $_GET['appointment_id'] ?? 0);
 
 if (!$appointmentId) {
@@ -20,7 +30,6 @@ if (!$appointmentId) {
     exit;
 }
 
-// Get appointment to verify ownership/access
 $appointment = $appointmentManager->getById($appointmentId);
 
 if (!$appointment) {
@@ -30,15 +39,14 @@ if (!$appointment) {
 
 // Check access based on role
 $hasAccess = false;
-$userRole = $_SESSION['user_role'];
+$userRole  = $_SESSION['user_role'];
 
 if ($userRole === 'patient' && $appointment['patient_id'] == $_SESSION['user_id']) {
     $hasAccess = true;
 } elseif ($userRole === 'doctor') {
-    // Get doctor ID
     $stmt = $pdo->prepare("SELECT id FROM doctors WHERE user_id = ?");
     $stmt->execute([$_SESSION['user_id']]);
-    $doctor = $stmt->fetch(PDO::FETCH_ASSOC);
+    $doctor = $stmt->fetch();
     if ($doctor && $appointment['doctor_id'] == $doctor['id']) {
         $hasAccess = true;
     }
@@ -61,7 +69,7 @@ switch ($action) {
             $result = ['success' => false, 'message' => 'Only doctors can confirm appointments'];
         }
         break;
-        
+
     case 'complete':
         if ($userRole === 'doctor' || $userRole === 'admin') {
             $result = $appointmentManager->updateStatus($appointmentId, 'completed');
@@ -69,49 +77,36 @@ switch ($action) {
             $result = ['success' => false, 'message' => 'Only doctors can complete appointments'];
         }
         break;
-        
+
     case 'cancel':
-        $reason = $_POST['reason'] ?? '';
-        $result = $appointmentManager->cancelAppointment($appointmentId, $reason, $userRole);
+        // FIX: use updateStatus() directly — cancelAppointment() does not exist
+        $reason = sanitize($_POST['reason'] ?? '');
+        $result = $appointmentManager->updateStatus($appointmentId, 'cancelled', $userRole, $reason);
         break;
-        
+
+    case 'add_notes':
+        if ($userRole === 'doctor') {
+            $notes = sanitize($_POST['notes'] ?? '');
+            $success = $appointmentManager->addNotes($appointmentId, $notes);
+            $result = $success
+                ? ['success' => true,  'message' => 'Notes saved successfully']
+                : ['success' => false, 'message' => 'Failed to save notes'];
+        } else {
+            $result = ['success' => false, 'message' => 'Only doctors can add notes'];
+        }
+        break;
+
     case 'reschedule':
         if ($userRole === 'patient') {
-            $newDate = $_POST['new_date'] ?? '';
-            $newTime = $_POST['new_time'] ?? '';
-            
+            $newDate = sanitize($_POST['new_date'] ?? '');
+            $newTime = sanitize($_POST['new_time'] ?? '');
             if ($newDate && $newTime) {
-                // Check if new slot is available
-                $stmt = $pdo->prepare("
-                    SELECT COUNT(*) FROM appointments 
-                    WHERE doctor_id = ? AND appointment_date = ? AND appointment_time = ? 
-                    AND status NOT IN ('cancelled', 'completed') AND id != ?
-                ");
-                $stmt->execute([$appointment['doctor_id'], $newDate, $newTime, $appointmentId]);
-                
-                if ($stmt->fetchColumn() > 0) {
-                    $result = ['success' => false, 'message' => 'Selected time slot is not available'];
-                } else {
-                    $stmt = $pdo->prepare("UPDATE appointments SET appointment_date = ?, appointment_time = ?, status = 'pending' WHERE id = ?");
-                    $stmt->execute([$newDate, $newTime, $appointmentId]);
-                    $result = ['success' => true, 'message' => 'Appointment rescheduled successfully'];
-                }
+                $result = $appointmentManager->reschedule($appointmentId, $newDate, $newTime);
             } else {
                 $result = ['success' => false, 'message' => 'Please provide new date and time'];
             }
         } else {
             $result = ['success' => false, 'message' => 'Only patients can reschedule appointments'];
-        }
-        break;
-        
-    case 'add_notes':
-        if ($userRole === 'doctor') {
-            $notes = $_POST['notes'] ?? '';
-            $stmt = $pdo->prepare("UPDATE appointments SET notes = ? WHERE id = ?");
-            $stmt->execute([$notes, $appointmentId]);
-            $result = ['success' => true, 'message' => 'Notes saved successfully'];
-        } else {
-            $result = ['success' => false, 'message' => 'Only doctors can add notes'];
         }
         break;
 }
