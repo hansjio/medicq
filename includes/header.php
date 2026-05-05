@@ -76,11 +76,13 @@ $currentPage = basename($_SERVER['PHP_SELF'], '.php');
                 </div>
                 
                 <div class="user-menu dropdown">
-                    <div class="user-avatar">
-                        <?php echo strtoupper(substr($currentUser['full_name'], 0, 1)); ?>
+                    <div class="user-menu-toggle">
+                        <div class="user-avatar">
+                            <?php echo strtoupper(substr($currentUser['full_name'], 0, 1)); ?>
+                        </div>
+                        <span class="user-name"><?php echo htmlspecialchars($currentUser['full_name']); ?></span>
+                        <i class="fas fa-chevron-down" style="font-size: 12px; color: var(--gray-400);"></i>
                     </div>
-                    <span class="user-name"><?php echo htmlspecialchars($currentUser['full_name']); ?></span>
-                    <i class="fas fa-chevron-down" style="font-size: 12px; color: var(--gray-400);"></i>
                     
                     <div class="dropdown-menu">
                         <a href="<?php echo SITE_URL; ?>/<?php echo getUserRole(); ?>/profile.php" class="dropdown-item">

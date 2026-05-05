@@ -2,6 +2,9 @@
  * MEDICQ - Main JavaScript File
  */
 
+// Global SITE_URL variable — set by PHP in footer.php before this script loads
+const SITE_URL = window.SITE_URL || '';
+
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize dropdowns
     initDropdowns();
@@ -26,7 +29,7 @@ function initDropdowns() {
     const dropdowns = document.querySelectorAll('.dropdown');
     
     dropdowns.forEach(dropdown => {
-        const toggle = dropdown.querySelector('.notification-bell, .user-menu');
+        const toggle = dropdown.querySelector('.notification-bell, .user-menu-toggle');
         
         if (toggle) {
             toggle.addEventListener('click', function(e) {
@@ -325,6 +328,3 @@ function validateForm(formElement) {
     
     return isValid;
 }
-
-// Global SITE_URL variable (should be set by PHP)
-const SITE_URL = window.SITE_URL || '';

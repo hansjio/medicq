@@ -1,6 +1,7 @@
-    </main>
+</main>
     
     <!-- JavaScript -->
+    <script>window.SITE_URL = '<?php echo SITE_URL; ?>';</script>
     <script src="<?php echo SITE_URL; ?>/assets/js/main.js"></script>
     <?php if (isset($pageScript)): ?>
     <script src="<?php echo SITE_URL; ?>/assets/js/<?php echo $pageScript; ?>.js"></script>
